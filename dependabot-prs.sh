@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Show merged Dependabot PRs grouped by merger
+# Show merged Dependabot PRs grouped by assignee
 # Usage: dependabot-prs ORG [days]  (default: 14)
 # Example: dependabot-prs my-org 30
 
@@ -21,15 +21,21 @@ gh api graphql -f query="
         title
         url
         mergedAt
-        mergedBy { login }
+        assignees(first: 1) { nodes { login } }
         repository { nameWithOwner }
       }
     }
   }
-}" | jq -r '
+}" | jq -r --arg since "$since" --argjson days "$days" '
   .data.search.nodes
-  | group_by(.mergedBy.login)
-  | map({mergedBy: .[0].mergedBy.login, count: length, prs: map({title, repo: .repository.nameWithOwner, mergedAt, url})})
+  | map(. + {assignee: .assignees.nodes[0].login})
+  | group_by(.assignee)
+  | map({assignee: .[0].assignee, count: length, prs: map({title, repo: .repository.nameWithOwner, mergedAt, url})})
   | sort_by(-.count)
-  | .[] | "\n👤 \(.mergedBy) — \(.count) PRs", (.prs[] | "  • [\(.repo)] \(.title)")
+  | . as $groups
+  | ($groups[] | "\n👤 \(.assignee) — \(.count) PRs", (.prs[] | "  • [\(.repo)] \(.title)")),
+    "\n---",
+    "📊 Summary (last \($days) days, merged since \($since))",
+    "  \($groups | map(.count) | add) PRs across \($groups | length) assignees",
+    ($groups[] | "  • \(.assignee): \(.count)")
 '
