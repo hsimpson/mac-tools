@@ -15,7 +15,7 @@ since=$(date -v-${days}d '+%Y-%m-%d' 2>/dev/null || date -d "${days} days ago" '
 
 gh api graphql -f query="
 {
-  search(query: \"org:$1 author:app/dependabot is:pr is:merged merged:>=${since}\", type: ISSUE, first: 100) {
+  search(query: \"org:$1 label:dependencies is:pr is:merged merged:>${since}\", type: ISSUE, first: 100) {
     nodes {
       ... on PullRequest {
         title
@@ -35,7 +35,7 @@ gh api graphql -f query="
   | . as $groups
   | ($groups[] | "\n👤 \(.assignee) — \(.count) PRs", (.prs[] | "  • [\(.repo)] \(.title)")),
     "\n---",
-    "📊 Summary (last \($days) days, merged since \($since))",
+    "📊 Summary (last \($days) days, merged after \($since))",
     "  \($groups | map(.count) | add) PRs across \($groups | length) assignees",
     ($groups[] | "  • \(.assignee): \(.count)")
 '
