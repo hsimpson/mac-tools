@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ec2-instance-inventory.sh - List EC2 instances with AMI details (default region)
+# ec2-instance-inventory.sh - List running EC2 instances with AMI details (default region)
 set -euo pipefail
 
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
@@ -16,7 +16,7 @@ usage() {
   cat <<'EOF'
 Usage: ec2-instance-inventory.sh [OPTIONS]
 
-List all EC2 instances in the default (or configured) AWS region.
+List all running EC2 instances in the default (or configured) AWS region.
 
 Options:
   -r, --region REGION   AWS region (overrides AWS_REGION / AWS_DEFAULT_REGION)
@@ -24,7 +24,7 @@ Options:
   -h, --help            Show this help
 
 Columns:
-  instanceID, name, instance-type, AMI-ID, AMI-name, platform-arch, state, ebs
+  instanceID, name, instance-type, AMI-ID, AMI-name, platform-arch, ebs
 EOF
 }
 
@@ -60,11 +60,12 @@ SORTED_FILE="$(mktemp "${TMPDIR}/ec2-sorted.XXXXXX")"
 trap 'rm -f "$INSTANCES_FILE" "$AMI_FILE" "$VOLUMES_FILE" "$SORTED_FILE"' EXIT
 
 aws_cmd ec2 describe-instances \
-  --query 'Reservations[].Instances[].[InstanceId, Tags[?Key==`Name`].Value | [0], InstanceType, ImageId, Architecture, PlatformDetails, State.Name, join(`,`, BlockDeviceMappings[?Ebs!=null].Ebs.VolumeId)]' \
+  --filters Name=instance-state-name,Values=running \
+  --query 'Reservations[].Instances[].[InstanceId, Tags[?Key==`Name`].Value | [0], InstanceType, ImageId, Architecture, PlatformDetails, join(`,`, BlockDeviceMappings[?Ebs!=null].Ebs.VolumeId)]' \
   --output text > "$INSTANCES_FILE"
 
 if [[ ! -s "$INSTANCES_FILE" ]]; then
-  echo "No EC2 instances found." >&2
+  echo "No running EC2 instances found." >&2
   exit 0
 fi
 
@@ -73,7 +74,7 @@ aws_cmd ec2 describe-images --image-ids $AMI_IDS \
   --query 'Images[].[ImageId, Name]' \
   --output text | sort > "$AMI_FILE"
 
-VOLUME_IDS="$(cut -f8 "$INSTANCES_FILE" | tr ',' '\n' | sed '/^$/d' | sort -u | tr '\n' ' ')"
+VOLUME_IDS="$(cut -f7 "$INSTANCES_FILE" | tr ',' '\n' | sed '/^$/d' | sort -u | tr '\n' ' ')"
 if [[ -n "$VOLUME_IDS" ]]; then
   aws_cmd ec2 describe-volumes --volume-ids $VOLUME_IDS \
     --query 'Volumes[].[VolumeId, VolumeType, Size]' \
@@ -99,8 +100,8 @@ awk -F'\t' -v vol_file="$VOLUMES_FILE" '
     if (name == "" || name == "None") name = "(no name)"
     platform_arch = $6 "/" $5
     ebs = "-"
-    if ($8 != "" && $8 != "None") {
-      n = split($8, ids, ",")
+    if ($7 != "" && $7 != "None") {
+      n = split($7, ids, ",")
       ebs_parts = ""
       for (i = 1; i <= n; i++) {
         vid = ids[i]
@@ -112,23 +113,23 @@ awk -F'\t' -v vol_file="$VOLUMES_FILE" '
       }
       if (ebs_parts != "") ebs = ebs_parts
     }
-    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", name, $1, $3, $4, ami_name[$4], platform_arch, $7, ebs
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", name, $1, $3, $4, ami_name[$4], platform_arch, ebs
   }
 ' "$AMI_FILE" "$INSTANCES_FILE" | sort -t$'\t' -k1,1f > "$SORTED_FILE"
 
 case "$OUTPUT" in
   csv)
-    echo "instanceID,name,instance-type,AMI-ID,AMI-name,platform-arch,state,ebs"
-    awk -F'\t' '{printf "%s,%s,%s,%s,%s,%s,%s,%s\n", $2, $1, $3, $4, $5, $6, $7, $8}' "$SORTED_FILE"
+    echo "instanceID,name,instance-type,AMI-ID,AMI-name,platform-arch,ebs"
+    awk -F'\t' '{printf "%s,%s,%s,%s,%s,%s,%s\n", $2, $1, $3, $4, $5, $6, $7}' "$SORTED_FILE"
     ;;
   markdown|table)
-    echo "| instanceID | name | instance-type | AMI-ID | AMI-name | platform-arch | state | ebs |"
-    echo "|---|---|---|---|---|---|---|---|"
+    echo "| instanceID | name | instance-type | AMI-ID | AMI-name | platform-arch | ebs |"
+    echo "|---|---|---|---|---|---|---|"
     awk -F'\t' '{
       for (i = 1; i <= NF; i++) {
         gsub(/\|/, "\\|", $i)
       }
-      printf "| %s | %s | %s | %s | %s | %s | %s | %s |\n", $2, $1, $3, $4, $5, $6, $7, $8
+      printf "| %s | %s | %s | %s | %s | %s | %s |\n", $2, $1, $3, $4, $5, $6, $7
     }' "$SORTED_FILE"
     ;;
   *)
